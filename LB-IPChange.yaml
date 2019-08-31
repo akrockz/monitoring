@@ -1,0 +1,146 @@
+---
+AWSTemplateFormatVersion: '2010-09-09'
+Description: To monitor and notify Ops team IP Changes for all load balancers on the account
+
+Parameters:
+
+  ArtifactBucketName:
+    Type: String
+    Description: Base URL for artifacts in S3. From deployspec compiler.
+
+  ArtifactKeyPrefix:
+    Type: String
+    Description: Build path prefix for this app. From deployspec compiler.
+
+  MonitorFrequencyInMinutes:
+    Type: String
+
+  NamePrefix:
+    Type: String
+    Description: Common naming prefix for resources.
+
+Resources:
+
+  LBIPChangeRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Path: /
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: LBIPChangePolicies
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow # allow lambda to describe load balancer
+                Action:
+                  - elasticloadbalancing:Describe*
+                Resource: "*"
+              - Effect: Allow
+                Action:
+                  - cloudwatch:putMetricData
+                Resource: "*"
+              - Effect: Allow
+                Action:
+                  - dynamodb:UpdateItem
+                  - dynamodb:Query
+                Resource:
+                  - !GetAtt LBIPChangeTable.Arn
+              - Effect: Allow
+                Action:
+                  - SNS:Publish
+                Resource:
+                  - !Ref OpsTeamTopic
+
+  LBIPChangeLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/${NamePrefix}-lbipchange"
+      RetentionInDays: 90
+
+  LBIPChangeTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      AttributeDefinitions:
+        - AttributeName: lbdomainname
+          AttributeType: S
+      BillingMode: PAY_PER_REQUEST
+      KeySchema:
+        - AttributeName: lbdomainname
+          KeyType: HASH
+      TableName: !Sub "${NamePrefix}-lbipchange"
+
+  LBIPChangeLambda:
+    Type: AWS::Lambda::Function
+    DependsOn:
+      - LBIPChangeLogGroup
+    Properties:
+      Description: Detect IP Changes for all load balancers and notify Ops Team
+      Code:
+        S3Bucket: !Ref ArtifactBucketName
+        S3Key: !Sub "${ArtifactKeyPrefix}/LB-IPChange.zip"
+      FunctionName: !Sub "${NamePrefix}-lbipchange"
+      Handler: LB-IPChange.handler
+      MemorySize: 256
+      Role: !GetAtt LBIPChangeRole.Arn
+      Runtime: python3.7
+      Timeout: 300
+      Environment:
+        Variables:
+          DYNTABLE_NAME: !Ref LBIPChangeTable
+          TOPICARN: !Ref OpsTeamTopic
+          ACCOUNTID: !Ref AWS::AccountId
+
+  LBIPChangeEventRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Description: "Scheduled lookup all existing load balancers for IP changes"
+      ScheduleExpression:
+        !Sub "rate(${MonitorFrequencyInMinutes} minutes)" # Every x minutes
+      Targets:
+        - Id: LBIPChangeLambdaTarget
+          Arn: !GetAtt LBIPChangeLambda.Arn
+
+  LBIPChangeLambdaPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName:
+        Ref: LBIPChangeLambda
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt LBIPChangeEventRule.Arn
+
+  OpsTeamTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: !Sub "${NamePrefix}-LBIPChange"
+      DisplayName: !Sub "${NamePrefix}-LBIPChange"
+      Subscription:
+        - Endpoint: abc@com
+          Protocol: email
+
+  OpsTopicPolicy:
+    Type: AWS::SNS::TopicPolicy
+    Properties:
+      PolicyDocument:
+        Id: Id1
+        Version: '2012-10-17'
+        Statement:
+        - Sid: Sid1
+          Effect: Allow
+          Principal:
+            Service:
+            - 'lambda.amazonaws.com' # Allow Lambda
+          Action: 'sns:Publish'
+          Resource: !Ref OpsTeamTopic
+      Topics:
+        - !Ref OpsTeamTopic
