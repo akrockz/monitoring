@@ -1,0 +1,32 @@
+---
+
+- label: deploy-core-monitoring-LB-IPChange-dev
+  type: create_stack
+  params:
+    template: LB-IPChange.yaml
+    stack_name: "{{ core.Project }}-{{ core.App }}-LBIPChange-resources"
+    parameters:
+      ArtifactBucketName: "{{ core.ArtifactBucketName }}"
+      ArtifactKeyPrefix: "{{ core.ArtifactKeyPrefix }}"
+      MonitorFrequencyInMinutes: '525600'
+      NamePrefix: "{{ core.Portfolio }}-{{ core.App }}"  # Nice way to prefix resource names.
+    accounts:
+      - "12321"  # Dev5
+    regions:
+      - ap-southeast-1  # Asia Pacific (Singapore)
+
+- label: deploy-core-monitoring-LB-IPChange-nonprod
+  type: create_stack
+  params:
+    template: LB-IPChange.yaml
+    stack_name: "{{ core.Project }}-{{ core.App }}-LBIPChange-resources"
+    parameters:
+      ArtifactBucketName: "{{ core.ArtifactBucketName }}"
+      ArtifactKeyPrefix: "{{ core.ArtifactKeyPrefix }}"
+      MonitorFrequencyInMinutes: '60'
+      NamePrefix: "{{ core.Portfolio }}-{{ core.App }}"  # Nice way to prefix resource names.
+    accounts:
+      - "1232"  # NonProd semi-auto
+    regions:
+      - ap-southeast-1  # Asia Pacific (Singapore)
+
